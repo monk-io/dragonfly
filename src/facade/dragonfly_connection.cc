@@ -130,6 +130,9 @@ ABSL_FLAG(bool, enable_memcache_io_loop_v2, true,
           "Enable the event-driven IoLoopV2 for non-TLS Memcache connections.");
 ABSL_FLAG(bool, enable_resp_io_loop_v2, false,
           "Enable the event-driven IoLoopV2 for non-TLS RESP connections.");
+ABSL_FLAG(bool, enable_pipeline_squashing_v2, true,
+          "Enable vectorized pipeline squashing for the V2 dispatch loop. Groups consecutive "
+          "single-shard pipeline commands by shard and executes them in parallel.");
 ABSL_RETIRED_FLAG(bool, experimental_io_loop_v2, true, "retired.");
 
 using namespace util;
@@ -970,6 +973,7 @@ void Connection::HandleRequests() {
           !is_tls_ &&
           ((protocol_ == Protocol::MEMCACHE && GetFlag(FLAGS_enable_memcache_io_loop_v2)) ||
            (protocol_ == Protocol::REDIS && GetFlag(FLAGS_enable_resp_io_loop_v2)));
+      pipeline_squashing_v2_ = ioloop_v2_ && GetFlag(FLAGS_enable_pipeline_squashing_v2);
 
       socket_->RegisterOnErrorCb([this](int32_t mask) { this->OnBreakCb(mask); });
       switch (protocol_) {
@@ -1498,8 +1502,27 @@ auto Connection::ParseLoop() -> ParserStatus {
       protocol_ == Protocol::MEMCACHE ? &Connection::ParseMCBatch : &Connection::ParseRedisBatch;
 
   ParserStatus parse_status = NEED_MORE;
+
   do {
+    DCHECK_GT(io_buf_.InputLen(), 0u);
+
     parse_status = (this->*parse_func)(io_buf_);
+
+    if (parse_status == NEED_MORE && tl_facade_stats->conn_stats.pipeline_queue_bytes < 1_MB) {
+      DCHECK_EQ(io_buf_.InputLen(), 0u);
+
+      // make an attempt
+      if (!pending_input_) {
+        // Let other fibers / callbacks run to potentially produce more input.
+        ThisFiber::SleepFor(10us);
+        // ThisFiber::Yield();
+      }
+      // We have pending input that has not yet been parsed, and we use modest amount of memory
+      // so let's skip the execution to read and parse more data that will produce a
+      // bigger pipeline to execute.
+      if (pending_input_)
+        return NEED_MORE;
+    }
 
     // Execute/reply the commands parsed so far first, so a trailing protocol error still flushes
     // earlier replies in order before we report it.
@@ -2586,6 +2609,8 @@ bool Connection::ExecuteBatch() {
   absl::Cleanup batch_guard = [this] { reply_builder_->SetBatchMode(false); };
   auto& conn_stats = tl_facade_stats->conn_stats;
 
+  DCHECK(!pending_input_);
+
   bool is_true_pipeline = (parsed_to_execute_->next) != nullptr;
 
   // Retires the head command once its reply has been handled: removes it from the queue and
@@ -2603,6 +2628,30 @@ bool Connection::ExecuteBatch() {
     else
       ReleaseParsedCommand(cmd);
   };
+
+  // V2 vectorized squash phase: group single-shard commands by shard and execute in parallel.
+  // dispatch_waiting_count_ is the exact length of the run starting at parsed_to_execute_, so the
+  // squash works even when earlier commands are still in flight (their deferred replies keep parse
+  // order; ReplyBatch won't send the squashed replies until the in-flight head completes).
+  if (pipeline_squashing_v2_ && dispatch_waiting_count_ > 1 && protocol_ == Protocol::REDIS) {
+    // Like V1's SquashPipeline, sample once before the blocking squash and attribute it to every
+    // squashed command's parse->dispatch wait.
+    uint64_t dispatch_start = CycleClock::Now();
+    unsigned squashed =
+        service_->DispatchSquashedBatch(parsed_to_execute_, dispatch_waiting_count_, cc_.get());
+    for (unsigned i = 0; i < squashed && parsed_to_execute_; i++) {
+      conn_stats.pipelined_wait_latency +=
+          CycleClock::ToUsec(dispatch_start - parsed_to_execute_->parsed_cycle);
+      AdvanceToExecute();
+    }
+    if (squashed > 0)
+      conn_stats.pipeline_dispatch_calls++;
+    conn_stats.pipeline_dispatch_commands += squashed;
+    if (squashed > 0) {
+      io_event_.notify();
+      return true;
+    }
+  }
 
   // Execute sequentially all parsed commands. parsed_to_execute_ points to the next command to
   // dispatch; it advances as commands are dispatched, and parsed_head_ advances with it whenever a
@@ -3125,6 +3174,8 @@ variant<error_code, Connection::ParserStatus> Connection::IoLoopV2() {
       }
 
       io_event_.await([this] { return ShouldWakeIdle(); });
+      if (pending_input_)
+          continue;
     }
 
     phase_ = PROCESS;
@@ -3146,6 +3197,13 @@ variant<error_code, Connection::ParserStatus> Connection::IoLoopV2() {
       // Do NOT parse - that would grow the queue further. Instead, drain already-queued
       // commands (execute + reply) to free memory, then park until pressure is relieved.
       parse_status = NEED_MORE;
+      if (io_buf_.InputLen() == 0) {
+        CHECK(!pending_input_);
+        ThisFiber::Yield();
+        if (pending_input_) {
+          continue;  // new data arrived while yielding, go back to the top to read and parse it.
+        }
+      }
 
       // Handle Parsed Commands Queue (Data Path)
       auto& conn_stats = GetLocalConnStats();
@@ -3213,7 +3271,7 @@ variant<error_code, Connection::ParserStatus> Connection::IoLoopV2() {
       return std::exchange(io_ec_, {});
     }
 
-    if ((parse_status != OK) && (parse_status != NEED_MORE)) {
+    if (ERROR == parse_status) {
       break;
     }
 

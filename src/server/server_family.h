@@ -10,6 +10,7 @@
 #include <string>
 
 #include "core/qlist.h"
+#include "facade/cmd_arg_parser.h"
 #include "facade/facade_stats.h"
 #include "facade/facade_types.h"
 #include "server/acl/user_registry.h"
@@ -370,8 +371,8 @@ class ServerFamily {
   void Config(CmdArgList args, CommandContext* cmd_cntx);
   void DbSize(CmdArgList args, CommandContext* cmd_cntx);
   void Debug(CmdArgList args, CommandContext* cmd_cntx);
-  void Dfly(CmdArgList args, CommandContext* cmd_cntx);
-  void Memory(CmdArgList args, CommandContext* cmd_cntx);
+  void Dfly(facade::CmdArgParser parser, CommandContext* cmd_cntx);
+  void Memory(facade::CmdArgParser parser, CommandContext* cmd_cntx);
   void Shrink(CmdArgList args, CommandContext* cmd_cntx);
   void FlushDb(CmdArgList args, CommandContext* cmd_cntx);
   void Info(CmdArgList args, CommandContext* cmd_cntx) ABSL_LOCKS_EXCLUDED(replicaof_mu_);
@@ -385,7 +386,7 @@ class ServerFamily {
   void Role(CmdArgList args, CommandContext* cmd_cntx) ABSL_LOCKS_EXCLUDED(replicaof_mu_);
   void Save(CmdArgList args, CommandContext* cmd_cntx);
   void BgSave(CmdArgList args, CommandContext* cmd_cntx);
-  void Script(CmdArgList args, CommandContext* cmd_cntx);
+  void Script(facade::CmdArgParser parser, CommandContext* cmd_cntx);
   void SlowLog(CmdArgList args, CommandContext* cmd_cntx);
   void Module(CmdArgList args, CommandContext* cmd_cntx);
 

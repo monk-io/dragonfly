@@ -74,10 +74,10 @@ below).
 | 7  | [`io_event_.notify()` — Skip Redundant Wakeups (Deduplication)](#task-7-io_event_notify--skip-redundant-wakeups-deduplication--p2-investigate-first) | — | P3 — Deferred | Unknown | TBD | Helio audit | — | DEFERRED |
 | 8  | [Soft Backpressure / Smart Yielding](#task-8-soft-backpressure--smart-yielding--p2) | — | P3 — Deferred | Medium | Medium | None | — | DEFERRED |
 | 9  | [Multi-Receive (io_uring Buffer Ring)](#task-9-full-io_uring-buffer-ring-integration--p3-future--endgame) | 3 | P2 — Direction #3 | High | Large | Task 17, Kernel 5.19+, Design sync | — | TODO |
-| 10 | [Deferred Fan-Out Batching (Pubsub p=1)](#task-10-deferred-fan-out-batching-pubsub-p1--p2) | — | P3 — Deferred | Medium | Medium | Task 5 merged | — | DEFERRED |
+| 10 | [Deferred Fan-Out Batching (Pubsub p=1)](#task-10-deferred-fan-out-batching-pubsub-p1--p2) | — | P3 — Deferred | Medium | Medium | Task 5 merged | — | PARTIALLY DONE — needs benchmark |
 | ~~11~~ | ~~[V2 Subscriber-Side Reply Batching (SetBatchMode in ProcessControlMessages)](#task-11-v2-subscriber-side-reply-batching-setbatchmode-in-processcontrolmessages--merged)~~ | ~~1~~ | ~~P2 — Important~~ | ~~Low~~ | ~~Small~~ | ~~None~~ | ~~[#7479](https://github.com/dragonflydb/dragonfly/pull/7479)~~ | **MERGED** |
 | 12 | [TLS Support for IoLoopV2 (MC + RESP)](#task-12-tls-support-for-ioloopv2--p1-required) | 4 | P1 — Required | High | Large | None | — | TODO |
-| **13** | **[SquashPipeline for V2 (Direction #2)](#task-13-squashpipeline-for-v2--p1-direction-2)** | **3** | **P1 — Direction #2** | **Medium** | **Large** | **Design sync with Roman** | — | **TODO (needs meeting)** |
+| **13** | **[SquashPipeline for V2 (Direction #2)](#task-13-squashpipeline-for-v2--p1-direction-2)** | **3** | **P1 — Direction #2** | **Medium** | **Large** | **Design sync with Roman** | — | **PARTIALLY DONE — needs benchmark** |
 | ~~14~~ | ~~[Fiber-Level Time Profiling (Measure Before Optimize)](#task-14-fiber-level-time-profiling-measure-before-optimize--p0-next)~~ | ~~2~~ | ~~P0~~ | ~~Low~~ | ~~Small–Medium~~ | ~~None~~ | — | **DONE (instrumentation in place; hypothesis shifted)** |
 | ~~15~~ | ~~[Idle-Flush Coalescing Delay (`pipeline_wait_batch_usec` for V2)](#task-15-idle-flush-coalescing-delay-pipeline_wait_batch_usec-for-v2--cancelled)~~ | ~~2~~ | ~~P2 — Experiment~~ | ~~Low~~ | ~~Trivial~~ | ~~Task 14 data~~ | — | **CANCELLED** |
 | ~~16~~ | ~~[Transactional-Command Reply-Flush Coalescing (ZADD `batched_=false`)](#task-16-transactional-command-reply-flush-coalescing-zadd-batched_false--cancelled)~~ | ~~2~~ | ~~P3 — Low~~ | ~~Low~~ | ~~Small~~ | ~~Task 14 data~~ | — | **CANCELLED** |
@@ -87,6 +87,10 @@ below).
 | ~~20~~ | ~~[Run instrumented binary — collect proof data](#task-20-run-instrumented-binary--collect-proof-data--p0-next)~~ | ~~2~~ | ~~P0~~ | ~~Low~~ | ~~Trivial~~ | ~~Task 19~~ | — | **CANCELLED (starvation not the issue)** |
 | ~~21~~ | ~~[ExecuteBatch opportunistic mid-exec read](#task-21-executebatch-opportunistic-mid-exec-read--conditional-on-task-20)~~ | ~~2~~ | ~~P0~~ | ~~Medium~~ | ~~Medium~~ | ~~Task 20~~ | — | **CANCELLED (ReadPendingInput() hurt everywhere)** |
 | ~~22~~ | ~~[FiberQueue Contention Investigation & Optimization](#task-22-fiberqueue-contention-investigation--optimization--p0)~~ | ~~2~~ | ~~P0 — Direction #1~~ | ~~Medium~~ | ~~Medium~~ | ~~None~~ | — | **DISPROVED — see note** |
+| **27** | **[Proof Plan — single-conn / 4 KB / p100 root-cause benchmarking](#task-27-proof-plan--single-conn--4-kb--p100-root-cause-benchmarking--p0-next)** | **2** | **P0 — NEXT** | **Low** | **Small** | **None** | — | **TODO** |
+| 24 | [Conditional, Time-Bounded Eager Parse (gated)](#task-24-conditional-time-bounded-eager-parse--p2-experiment) | 3 | P2 — Experiment | Medium | Medium | Task 27 | — | TODO |
+| 25 | [Coro-Squash — Async Coroutine Squasher](#task-25-coro-squash--async-coroutine-squasher-ok_backend--p1-direction-2) | 3 | P1 — Direction #2 | Medium | Large | Task 13 | — | PARTIALLY DONE — needs benchmark |
+| 26 | [Wire num_recv_provided_calls counter](#task-26-wire-num_recv_provided_calls-multishot-recv-counter--p3-small) | — | P3 — Small | Low | Trivial | None | — | TODO |
 
 ---
 
@@ -811,6 +815,10 @@ High. Requires kernel 5.19+, complex buffer ring management, and TLS cannot use 
 
 ## Task 10: Deferred Fan-Out Batching (Pubsub p=1) — P2
 
+> **STATUS (22 Jun 2026): PARTIALLY DONE — needs benchmark.** The enqueue/notify split has been
+> prototyped; it still needs a before/after pubsub p=1 (and p=10) benchmark to confirm it moves
+> syscalls toward V1 without regressing latency. Fold the run into Task 27's report.
+
 ### Summary
 
 Split PUBLISH's subscriber fan-out into two phases: first enqueue to all subscribers, then
@@ -1034,6 +1042,13 @@ with helio's `TlsSocket` abstraction.
 ---
 
 ## Task 13: SquashPipeline for V2 — P1 (Direction #2)
+
+> **STATUS (22 Jun 2026): PARTIALLY DONE — needs benchmark.** The *blocking* V2 squash is
+> implemented (`Connection::SquashPipelineV2()` → `Service::DispatchSquashedBatch` →
+> `MultiCommandSquasher`, fiber parks on `bc->Wait()`). What remains: (a) benchmark it at
+> single-conn / 4 KB / p100 and multi-conn p=10/100 (Task 27), and (b) the *non-blocking*
+> evolution that removes the `bc->Wait()` park — see Task 25 (coro-squash). Treat Task 13 as the
+> blocking baseline and Task 25 as its async successor.
 
 > **REOPENED (7 Jun 2026).** Originally cancelled (4 Jun 2026) based on Roman's position that
 > "async dispatch is always better than squashing." Roman has since changed his mind:
@@ -1851,9 +1866,244 @@ None. Can start immediately with profiling.
 
 ---
 
+## Task 27: Proof Plan — single-conn / 4 KB / p100 root-cause benchmarking — P0 (NEXT)
+
+> **Stop gambling.** Every prior "this will help" prediction for the single-conn / 4 KB / p100
+> regression has been a guess. Before building any fix (Task 24 gated-parse, Task 25 coro-squash,
+> Task 13 squash), run these experiments — cheapest and most discriminating first — to find where
+> the time actually goes. The benchmark workload is **SET-only** (`--ratio=1:0`), so the 4 KB is
+> the *inbound* request payload and each reply is a 5-byte `+OK`.
+
+### Experiment A — GET vs SET (do this first, almost free)
+single_conn / 4 KB / p100, V1 vs V2, for **SET** (4 KB request, tiny reply) and **GET** (tiny
+request, 4 KB reply):
+- SET regresses but GET doesn't → bottleneck is **inbound** (read/parse/copy of large values).
+- GET also regresses → bottleneck includes the **outbound/reply** side.
+- Both regress equally → a **common per-4 KB cost** (CPU/alloc); async-squash won't help.
+
+### Experiment B — the proactor_reads ratio
+With `dragonfly_proactor_reads_total` and `dragonfly_net_input_recv_total` (total recvs), compute
+`proactor_reads / io_read_cnt` for single-conn / 4 KB / p100 on V2.
+- High ratio → reads **are** overlapping execution → points at parse/execute serialization.
+- Low ratio → eager callback read rarely fires → a different problem (and the conditional-notify had
+  headroom).
+- ⚠️ Requires Task 26 (accurate `io_read_cnt` under multishot) and scraping both counters in
+  `bench.sh` (it currently scrapes neither).
+
+### Experiment C — eager-read A/B
+`--enable_resp_io_loop_v2_eager_read=true/false` (if present in the build), single-conn / 4 KB / p100.
+- OFF makes V2 much worse → eager read is doing real work; residual gap = parse/execute.
+- No change → reads aren't on the critical path.
+
+### Experiment D — CPU profile (the direct evidence)
+`perf record -g` on the server during single-conn / 4 KB / p100, V1 and V2; compare time in
+`RespSrvParser::Parse` + the `BackedArguments` value copy vs command execution vs `sendmsg`/
+`recvmsg`. The one experiment that *directly* shows whether parse/copy dominates and whether V1
+overlaps it.
+
+### Experiment E — squash off
+`--enable_pipeline_squashing_v2=false`, single-conn / 4 KB / p100. Isolates whether the blocking
+squash `Wait()` (Task 13) is implicated vs the per-command async path.
+
+### Experiment F — async-squash A/B (coro-squash)
+Only if A–D point at parse/execute serialization. Two sub-variants:
+- **ok_backend:** `--coro_squash=true` vs false (Task 25 — already built; flip the flag).
+- **dragonfly:** the full-async-poc branch, if/when it exists.
+Rerun single-conn / 4 KB / p100. If it closes the gap, that **confirms** lost parse∥execute overlap
+was the cause and async squashing is the fix. If not, the cost was raw 4 KB CPU — look elsewhere.
+
+### On yielding during parse/reply
+Yielding only ever buys "the proactor reads raw bytes" — it can **never** make parse or execute run
+concurrently, because there is still one fiber. So it cannot fix a parse↔execute serialization
+bottleneck; at best it keeps the TCP window open. Only a second fiber or async dispatch
+(Experiment F) gives real overlap. Do **not** invest in yield heuristics; run A→D, and if they point
+where suspected, go to F.
+
+### Deliverable
+
+After A–F, **write / modify the final report** at
+`/home/gil/benchmarks/__ioloopv2_bechmarks__/v1_vs_v2_22_6_26/analysis.md` with the proven root
+cause (replacing the current HYPOTHESIS framing) and the chosen fix direction.
+
+### Status
+
+TODO — this is the gating P0. Tasks 24 / 25 / 13 are downstream of its conclusion.
+
+---
+
+## Task 24: Conditional, Time-Bounded Eager Parse — P2 (Experiment)
+
+> **Distinct from the cancelled experiment.** Issue
+> [dataplane-private #242](https://github.com/dragonflydb/dataplane-private/issues/242) tested
+> *unconditional, unbounded* eager parsing in the `OnRecv` callback — parse on **every** callback,
+> with **no quota** on command count, bytes, or time. It regressed −10% to −19% on connection-dense,
+> moderately-pipelined workloads (worst at p=10) on both ok_backend and dragonfly, with zero batching
+> benefit. See Task 4 and the #242 evaluation. This task is a **narrower, gated** variant that
+> addresses both failure modes.
+
+### Summary
+
+Parse in the `OnRecv` callback **only** when this connection's fiber is currently parked waiting on
+command execution (the cross-shard squash hop / `bc->Wait()` window), and **bound the parse by
+wall-clock time, not by command count**. During the execution-wait window the proactor core would
+otherwise be idle (the fiber is parked, shards execute on other cores), so a *small, time-boxed*
+parse of the next batch uses otherwise-idle cycles and is ready when the fiber wakes — recreating
+V1's parse∥execute overlap for a single connection.
+
+### Why this differs from #242 (and might not blow up the same way)
+
+| Dimension | #242 (cancelled) | Task 24 (this) |
+|-----------|------------------|----------------|
+| When it parses | Every `OnRecv` callback, any fiber state | Only while the fiber is parked on its own execution hop (flag-gated) |
+| Bound | Unbounded (no quota at all) | **Time-bounded** (a few µs budget), not command-count bounded |
+| Neighbor starvation | High — steals CPU from other connections at random times | Lower — gated to this connection's idle-wait window; time budget caps the steal |
+| Backpressure | Bypassed `IsOverPipelineLimit()` → queue bloat (ZADD −92%) | Must honor `IsOverPipelineLimit()` + the `!CanReply()` guard |
+
+### Design constraints (carry forward the lessons)
+
+1. **Gate on a flag** set true only while the fiber is suspended inside the squash/execution wait
+   (set before `DispatchSquashedBatch` / `bc->Wait()`, cleared on resume). The callback parses
+   **only** when the flag is set.
+2. **Time bound, not count bound.** Use `CycleClock::Now()` and stop after a small budget (start
+   ~5–10 µs; make it a flag). This is the explicit requirement: bound by time, not by number of
+   commands.
+3. **Honor backpressure.** Respect `IsOverPipelineLimit()` and stop on `!parsed_head_->CanReply()`
+   to avoid the #242 / ZADD queue-bloat thrash.
+4. **No fiber ops in the callback** (no `Yield`/`Wait`); reuse `ParseRedis(..., enqueue_only=true,
+   yield=false)`.
+5. **`io_buf_` lifetime.** The in-flight squashed batch holds arg spans into `io_buf_`; the eager
+   parse must not compact/realloc those bytes mid-hop (use-after-free risk — same hazard as Task 4
+   Stage 2).
+
+### Relationship to async squashing
+
+This is a manual approximation of what Task 25 (coro-squash) achieves cleanly: a non-blocking squash
+lets the fiber itself parse the next batch in its normal loop while the current batch executes — same
+overlap, no concurrent-callback parse, no lifetime hazard. **Treat Task 24 as a cheap hypothesis
+test, not the shipping fix.** If Task 27 confirms lost parse∥execute overlap, prefer Task 25/13.
+
+### Status
+
+TODO — gated behind Task 27. Only build it if A–D point at parse/execute serialization and a quick
+signal is wanted before investing in async squash. Benchmark exactly like #242 (ok_backend +
+dragonfly, single + multi, p=1/10/100) to prove it does not reintroduce the neighbor-starvation
+regression.
+
+### Risk
+
+Medium. Re-enters the territory that produced the #242 regression and the ZADD −92% collapse; the
+gating + time-bound + backpressure guards are what keep it safe.
+
+---
+
+## Task 25: Coro-Squash — Async Coroutine Squasher (ok_backend) — P1 (Direction #2)
+
+### Summary
+
+`--coro_squash` (default off, `ok_main.cc`) is Roman's prototype of **non-blocking** pipeline
+squashing for V2, built on C++20 coroutines: a shared `BlockingCounter` plus a per-command reply
+coroutine. Unlike Task 13's blocking squash (the connection fiber parks on `bc->Wait()` during the
+shard hop), the coroutine version suspends only the per-command coroutine — the connection fiber
+returns to its loop and can read/parse the next batch while the current one executes. This is the
+clean way to restore V1's parse∥execute overlap in a single-fiber model.
+
+### Current State (partially done)
+
+- Implemented in **ok_backend** behind `ABSL_FLAG(bool, coro_squash, false, ...)`. The machinery
+  (`AsyncCmd` coroutine, `ResolveAwaiter`, per-command reply capture) exists and compiles.
+- **Not** ported to real Dragonfly (`MultiCommandSquasher` still blocks on `bc->Wait()`).
+- **Not benchmarked** — no before/after numbers yet.
+
+### Next Steps
+
+1. **Benchmark `--coro_squash=true` vs false** on ok_backend, single-conn / 4 KB / p100 (the worst
+   regression case) plus multi-conn p=1/10/100 — this is Task 27 Experiment F. If coro-squash
+   recovers the single-conn regression, it confirms the lost parse∥execute overlap hypothesis **and**
+   validates the shipping approach in one shot — without writing the risky Task 24 gated-parse.
+2. If the ok_backend numbers are positive, design the port to Dragonfly's `MultiCommandSquasher`
+   (ties into Task 13).
+
+### Relationship to Task 13
+
+Task 13 is the *blocking* squash (fewer cross-shard hops, but the fiber parks). Task 25 is the
+*non-blocking* evolution (fiber doesn't park → parse∥execute overlap). Complementary: Task 13 reduces
+hop volume; coro-squash removes the block. Endgame: "squash by shard AND don't block the fiber."
+
+### Status
+
+PARTIALLY DONE (ok_backend prototype exists behind flag) — needs benchmarking (Task 27).
+
+### Risk
+
+Medium. Coroutine lifecycle correctness (frame lifetime, reply-capture ordering) and the eventual
+Dragonfly port. The ok_backend prototype is isolated and safe to benchmark now.
+
+---
+
+## Task 26: Wire `num_recv_provided_calls` (multishot recv counter) — P3 (Small)
+
+### Summary
+
+`conn_stats.num_recv_provided_calls` is declared, aggregated, and exposed in INFO as
+`connection_recv_provided_calls`, but is **never incremented** — it always reads 0. Its intended
+purpose is to count `recv` completions delivered via an io_uring **provided buffer** (the multishot
+buffer-ring path). The increment site already exists structurally: the provided-buffer branch in
+`NotifyOnRecv`.
+
+### The Fix
+
+In `Connection::NotifyOnRecv`, in the `io::MutableBytes` (provided buffer) branch, bump the counter
+**and** the read counters that this branch currently skips (so multishot recv does not under-count
+`net_input_recv_total` / `net_input_bytes_total`):
+
+```cpp
+} else if (std::holds_alternative<io::MutableBytes>(n.read_result)) {  // provided buffer.
+    io::MutableBytes buf = std::get<io::MutableBytes>(n.read_result);
+    {
+      ReadBufTracker tracker(io_buf_);
+      io_buf_.WriteAndCommit(buf.data(), buf.size());
+    }
+    last_interaction_ = time(nullptr);
+    auto& conn_stats = tl_facade_stats->conn_stats;
+    conn_stats.io_read_bytes += buf.size();
+    local_stats_.net_bytes_in += buf.size();
+    ++conn_stats.io_read_cnt;
+    ++local_stats_.read_cnt;
+    ++conn_stats.num_recv_provided_calls;
+}
+```
+
+Why it matters: Task 27 Experiment B's `proactor_reads / io_read_cnt` ratio is meaningless if
+`io_read_cnt` is undercounted under multishot.
+
+### Status
+
+TODO — trivial. Do alongside the multishot / Task 17 work, or whenever the proof plan needs accurate
+recv counters under multishot.
+
+### Risk
+
+Low. Pure counter additions on the proactor thread (single-thread access, no atomics).
+
+---
+
 ## Changelog
 
-### v11 (current — 8 Jun 2026)
+### v12 (current — 22 Jun 2026)
+- **New Task 27: Proof Plan (P0, NEXT).** Formalizes the single-conn / 4 KB / p100 root-cause
+  benchmarking (Experiments A–F) as the gating step before any fix. Includes the coro-squash A/B.
+  Final report to be written / modified at `__ioloopv2_bechmarks__/v1_vs_v2_22_6_26/analysis.md`.
+- **New Task 24: Conditional, Time-Bounded Eager Parse.** A gated, time-bounded variant of the
+  cancelled unconditional eager parse (dataplane-private #242). Parses in the OnRecv callback only
+  while the fiber is parked on its execution hop, bounded by wall-clock time (not command count).
+  Gated behind Task 27.
+- **New Task 25: Coro-Squash (async coroutine squasher).** Documents Roman's `--coro_squash`
+  ok_backend prototype as the non-blocking evolution of Task 13. PARTIALLY DONE — needs benchmark.
+- **New Task 26: Wire `num_recv_provided_calls`** + fix the `io_read_cnt` multishot under-count in
+  the `NotifyOnRecv` provided-buffer branch.
+- **Tasks 10 and 13 → PARTIALLY DONE, needs benchmark.**
+
+### v11 (8 Jun 2026)
 - **Task 22 DISPROVED.** Noop SET experiment (noop floor: V2 = 2.41 µs, V1 squash = 2.73 µs)
   and perf profiling both rule out FiberQueue contention. V2's FiberQueue internals are
   faster than V1's. The gap is hop *volume* — 100 individual pushes vs ~4 batched — which

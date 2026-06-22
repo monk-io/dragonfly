@@ -743,13 +743,8 @@ get_send_count() {
     local raw val metric_name
     local _metrics_host; _metrics_host=${SERVER_HOST:-127.0.0.1}
     raw=$(curl -s --max-time 2 "http://${_metrics_host}:${SERVER_METRICS_PORT}/metrics" 2>/dev/null) || true
-    # ok_backend exposes 'reply_total'; dragonfly exposes 'dragonfly_reply_total'.
-    local _bname; _bname=$(basename "${SERVER_BIN}")
-    if [[ "$_bname" == "ok_backend" ]]; then
-        metric_name='reply_total'
-    else
-        metric_name='dragonfly_reply_total'
-    fi
+    # Both dragonfly and ok_backend expose 'dragonfly_reply_total'.
+    metric_name='dragonfly_reply_total'
     val=$(echo "$raw" | tr -d '\r' | grep "^${metric_name}" | awk '{sum += $NF} END {print (sum ? sum : 0)}') || true
     echo "${val:-0}"
 }
@@ -759,10 +754,12 @@ get_cmd_count() {
     # without relying on -n counts. Works for both dragonfly and ok_backend
     # (ok_backend exposes commands_processed_total on its main port).
     if [[ "$SERVER_TYPE" != "dragonfly" ]]; then echo 0; return; fi
-    local raw val
+    local raw val metric_name
     local _metrics_host; _metrics_host=${SERVER_HOST:-127.0.0.1}
     raw=$(curl -s --max-time 2 "http://${_metrics_host}:${SERVER_METRICS_PORT}/metrics" 2>/dev/null) || true
-    val=$(echo "$raw" | tr -d '\r' | grep '^dragonfly_commands_processed_total' | awk '{sum += $NF} END {print (sum ? sum : 0)}') || true
+    # Both dragonfly and ok_backend expose 'dragonfly_commands_processed_total'.
+    metric_name='dragonfly_commands_processed_total'
+    val=$(echo "$raw" | tr -d '\r' | grep "^${metric_name}" | awk '{sum += $NF} END {print (sum ? sum : 0)}') || true
     echo "${val:-0}"
 }
 
@@ -799,13 +796,8 @@ verify_metrics_endpoint() {
     local raw sample
     local _metrics_host; _metrics_host=${SERVER_HOST:-127.0.0.1}
     raw=$(curl -s --max-time 2 "http://${_metrics_host}:${SERVER_METRICS_PORT}/metrics" 2>/dev/null) || true
-    # ok_backend uses 'reply_total'; dragonfly uses 'dragonfly_reply_total'.
-    local _bname; _bname=$(basename "${SERVER_BIN}")
-    if [[ "$_bname" == "ok_backend" ]]; then
-        sample=$(echo "$raw" | tr -d '\r' | grep '^reply_total') || true
-    else
-        sample=$(echo "$raw" | tr -d '\r' | grep '^dragonfly_reply_total') || true
-    fi
+    # Both dragonfly and ok_backend expose 'dragonfly_reply_total'.
+    sample=$(echo "$raw" | tr -d '\r' | grep '^dragonfly_reply_total') || true
 
     if [[ -z "$raw" ]]; then
         echo "[!] WARNING: /metrics endpoint unreachable. SEND_SYSCALLS will show 0."

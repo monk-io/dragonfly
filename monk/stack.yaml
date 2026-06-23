@@ -1,0 +1,108 @@
+namespace: monk-dragonflydb
+
+stack:
+  defines: runnable
+  inherits: ./dragonfly
+
+  metadata:
+    name: Dragonfly Stack
+    description: Production-oriented Dragonfly deployment with authentication and persistent storage; services stay internal for safe composition.
+    tags: cache, redis, memcached, database, dragonfly, production
+    website: https://www.dragonflydb.io/
+    source: https://github.com/dragonflydb/dragonfly
+    license: BSL-1.1
+    private: false
+
+  variables:
+    password-secret-name:
+      type: string
+      value: dragonfly-password
+      description: Name of the Monk secret containing the Dragonfly password; set this secret when inheriting for production.
+    password-from-secret:
+      type: string
+      value: <- secret($password-secret-name)
+      description: Sensitive. Raw password read from the Monk secret store.
+    generated-password:
+      type: string
+      value: <- `generated-${random(100000000000, 999999999999)}`
+      description: Sensitive. Ephemeral fallback password used only when the named secret is absent, preventing an unauthenticated production stack.
+    requirepass:
+      type: string
+      value: <- $password-from-secret error? ? $generated-password : $password-from-secret
+      description: Sensitive. Effective Dragonfly AUTH password used by the production stack.
+    volume-size-gb:
+      type: int
+      value: 10
+      description: Persistent data volume size in gigabytes.
+    volume-name:
+      type: string
+      value: dragonfly-data
+      description: Persistent data volume name.
+
+  volumes:
+    data:
+      kind: ssd
+      size: <- $volume-size-gb
+      path: /data
+      name: <- $volume-name
+
+  permitted-secrets:
+    dragonfly-password: true
+
+stack-local:
+  defines: runnable
+  inherits: ./dragonfly
+
+  metadata:
+    name: Dragonfly Local Stack
+    description: Local verification flavor that publishes Dragonfly and its HTTP metrics endpoint on non-privileged host ports.
+    tags: cache, redis, memcached, database, dragonfly, local
+    website: https://www.dragonflydb.io/
+    source: https://github.com/dragonflydb/dragonfly
+    license: BSL-1.1
+    private: false
+
+  variables:
+    dragonfly-host-port:
+      type: int
+      value: 16379
+      description: Host port published for local Redis-compatible client checks.
+    admin-host-port:
+      type: int
+      value: 19999
+      description: Host port published for local HTTP admin and metrics checks.
+    requirepass:
+      type: string
+      value: ""
+      description: Sensitive. Empty only for this local-only flavor so health checks can run without a stored secret.
+    volume-size-gb:
+      type: int
+      value: 1
+      description: Local persistent data volume size in gigabytes.
+    volume-name:
+      type: string
+      value: dragonfly-local-data
+      description: Local persistent data volume name.
+
+  volumes:
+    data:
+      kind: local
+      size: <- $volume-size-gb
+      path: /data
+      name: <- $volume-name
+
+  services:
+    redis:
+      container: dragonfly
+      port: <- $dragonfly-port
+      protocol: tcp
+      publish: true
+      host-port: <- $dragonfly-host-port
+      description: Locally published Redis-compatible Dragonfly TCP endpoint for verification.
+    admin:
+      container: dragonfly
+      port: <- $admin-port
+      protocol: tcp
+      publish: true
+      host-port: <- $admin-host-port
+      description: Locally published Dragonfly HTTP admin and Prometheus metrics endpoint for verification.

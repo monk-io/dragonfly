@@ -49,6 +49,9 @@ dragonfly:
       type: string
       value: <- $requirepass empty? ? `exec dragonfly --alsologtostderr --bind=${bind-address} --port=${dragonfly-port} --admin_port=${admin-port} --dir=${data-dir} --dbfilename=${dbfilename}` : `exec dragonfly --alsologtostderr --bind=${bind-address} --port=${dragonfly-port} --admin_port=${admin-port} --dir=${data-dir} --dbfilename=${dbfilename} --requirepass=${requirepass}`
       description: Full Dragonfly start command assembled from the template variables.
+    self-path:
+      type: string
+      value: <- self-path
 
   containers:
     dragonfly:
@@ -74,7 +77,7 @@ dragonfly:
 
   checks:
     readiness:
-      code: <- `http-get("http://localhost:${admin-port}/metrics") nil? not`
+      code: http-get-service($self-path, "admin", "/metrics") get-member("status") 200 equal?
       period: 10
       initial-delay: 5
       attempts: 12

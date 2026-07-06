@@ -1,0 +1,80 @@
+namespace: monk-dragonflydb
+
+dragonfly:
+  defines: runnable
+
+  metadata:
+    name: Dragonfly
+    description: Redis and Memcached compatible in-memory data store.
+    tags: cache, redis, memcached, database, dragonfly
+    website: https://www.dragonflydb.io/
+    source: https://github.com/dragonflydb/dragonfly
+    license: BSL-1.1
+    private: true
+
+  variables:
+    image:
+      type: string
+      value: docker.io/dragonflydb/dragonfly
+      description: Public Docker Hub image used to run Dragonfly.
+    image-tag:
+      type: string
+      value: v1.27.1
+      description: Dragonfly image tag to deploy.
+    dragonfly-port:
+      type: int
+      value: 6379
+      description: TCP port Dragonfly listens on for Redis-compatible clients.
+    admin-port:
+      type: int
+      value: 9999
+      description: TCP port Dragonfly listens on for the HTTP admin and metrics endpoint.
+    bind-address:
+      type: string
+      value: 0.0.0.0
+      description: Address Dragonfly binds inside the container.
+    data-dir:
+      type: string
+      value: /data
+      description: Directory inside the container where Dragonfly stores persisted data.
+    dbfilename:
+      type: string
+      value: dump.rdb
+      description: Snapshot file name Dragonfly uses in the data directory.
+    requirepass:
+      type: string
+      value: ""
+      description: Sensitive. Dragonfly AUTH password; set this from secret(...) when inheriting for authenticated deployments.
+    dragonfly-command:
+      type: string
+      value: <- $requirepass empty? ? `exec dragonfly --alsologtostderr --bind=${bind-address} --port=${dragonfly-port} --admin_port=${admin-port} --dir=${data-dir} --dbfilename=${dbfilename}` : `exec dragonfly --alsologtostderr --bind=${bind-address} --port=${dragonfly-port} --admin_port=${admin-port} --dir=${data-dir} --dbfilename=${dbfilename} --requirepass=${requirepass}`
+      description: Full Dragonfly start command assembled from the template variables.
+
+  containers:
+    dragonfly:
+      image: <- $image
+      image-tag: <- $image-tag
+      bash: <- $dragonfly-command
+      restart: unless-stopped
+      logs:
+        quota: 100M
+        count: 5
+
+  services:
+    redis:
+      container: dragonfly
+      port: <- $dragonfly-port
+      protocol: tcp
+      description: Redis-compatible Dragonfly TCP endpoint for application clients.
+    admin:
+      container: dragonfly
+      port: <- $admin-port
+      protocol: tcp
+      description: Dragonfly HTTP admin and Prometheus metrics endpoint.
+
+  checks:
+    readiness:
+      code: <- `http-get("http://localhost:${admin-port}/metrics") nil? not`
+      period: 10
+      initial-delay: 5
+      attempts: 12

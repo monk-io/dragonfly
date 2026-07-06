@@ -1,0 +1,6 @@
+REPO monk-dragonflydb
+
+LOAD monk/dragonfly.yaml
+LOAD monk/stack.yaml
+
+ENTRY monk-dragonflydb/stack
